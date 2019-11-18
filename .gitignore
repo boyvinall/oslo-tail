@@ -1,0 +1,3 @@
+oslo-tail
+*.code-workspace
+*.pcap*
