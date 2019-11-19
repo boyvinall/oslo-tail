@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -63,6 +64,12 @@ func (a *amqpDecoder) decodeAMQP(s *stream) error {
 		return err
 	}
 
+	info := s.Info()
+	ip := info.ip
+	tcp := info.tcp
+	t := info.p.Metadata().Timestamp
+	fmt.Printf("%s %s:%d -> %s:%d seq %5d\n", t.Format("15:04:05.000"), ip.SrcIP, tcp.SrcPort, ip.DstIP, tcp.DstPort, tcp.Seq)
+
 	typ := frameType(scratch[0])
 	channel := binary.BigEndian.Uint16(scratch[1:3])
 	size := int(binary.BigEndian.Uint32(scratch[3:7]))
@@ -71,6 +78,7 @@ func (a *amqpDecoder) decodeAMQP(s *stream) error {
 		b := make([]byte, maxSize)
 		n, err := r.Read(b)
 		fmt.Fprintf(os.Stderr, "ERROR: typ=%s size=%d n=%d err=%v packets=%d\n", typ, size, n, err, s.Packets())
+		fmt.Fprintln(os.Stderr, hex.Dump(append(scratch[:], b[:n]...)))
 		return nil
 	}
 
@@ -203,33 +211,35 @@ func (a *amqpDecoder) decodeBody(b []byte) error {
 		return err
 	}
 	msg := m["oslo.message"]
-	if msg != "" {
-		payload := map[string]interface{}{}
-		err = json.Unmarshal([]byte(msg.(string)), &payload)
-		if err != nil {
-			return err
-		}
-		_, methodOK := payload["method"]
-		_, resultOK := payload["result"]
-		if methodOK {
-			if a.filterMethod == "" {
-				p, err := json.MarshalIndent(payload["args"], "  ", "  ")
-				if err != nil {
-					return err
-				}
-				fmt.Println(" ", payload["method"].(string), string(p))
-			} else if a.filterMethod == payload["method"].(string) {
-				p, err := json.MarshalIndent(payload["args"], "", "  ")
-				if err != nil {
-					return err
-				}
-				fmt.Printf("%s method=%s\n%s\n", a.basicDeliver.String(), payload["method"].(string), string(p))
+	if msg == "" {
+		return nil
+	}
+
+	payload := map[string]interface{}{}
+	err = json.Unmarshal([]byte(msg.(string)), &payload)
+	if err != nil {
+		return err
+	}
+	_, methodOK := payload["method"]
+	_, resultOK := payload["result"]
+	if methodOK {
+		if a.filterMethod == "" {
+			p, err := json.MarshalIndent(payload["args"], "  ", "  ")
+			if err != nil {
+				return err
 			}
-		} else if resultOK {
-			// fmt.Printf("%-30s : %v\n", "", "(result)")
-		} else {
-			// fmt.Println(msg.(string))
+			fmt.Println(" ", payload["method"].(string), string(p))
+		} else if a.filterMethod == payload["method"].(string) {
+			p, err := json.MarshalIndent(payload["args"], "", "  ")
+			if err != nil {
+				return err
+			}
+			fmt.Printf("%s method=%s\n%s\n", a.basicDeliver.String(), payload["method"].(string), string(p))
 		}
+	} else if resultOK {
+		// fmt.Printf("%-30s : %v\n", "", "(result)")
+	} else {
+		// fmt.Println(msg.(string))
 	}
 	return nil
 }

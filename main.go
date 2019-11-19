@@ -3,12 +3,10 @@ package main
 import (
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"time"
 
 	"github.com/google/gopacket"
-	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
 	"github.com/gravitational/version"
 
@@ -60,7 +58,7 @@ func run(c *cli.Context) error {
 		return errors.New("please specify either interface or file, not both")
 
 	case intf != "":
-		handle, err = pcap.OpenLive(intf, 0, true, pcap.BlockForever)
+		handle, err = pcap.OpenLive(intf, 65535, true, pcap.BlockForever)
 		if err != nil {
 			return err
 		}
@@ -103,15 +101,7 @@ func run(c *cli.Context) error {
 			if packet == nil {
 				return nil
 			}
-			if packet.NetworkLayer() == nil || packet.TransportLayer() == nil || packet.TransportLayer().LayerType() != layers.LayerTypeTCP {
-				log.Println("Unusable packet")
-				continue
-			}
-			if tcpLayer := packet.Layer(layers.LayerTypeTCP); tcpLayer != nil {
-				// Get actual TCP data from this layer
-				tcp, _ := tcpLayer.(*layers.TCP)
-				s.Write(tcp.LayerPayload())
-			}
+			s.Write(packet)
 
 		case <-ticker:
 			// Every minute, flush connections that haven't seen activity in the past 2 minutes.
