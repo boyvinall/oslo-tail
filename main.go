@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -77,19 +78,7 @@ func run(c *cli.Context) error {
 		}
 	}
 
-	s := NewStream()
-	a := amqpDecoder{
-		filterExchange: c.String("exchange"),
-		filterMethod:   c.String("method"),
-	}
-	go func() {
-		for {
-			err := a.decodeAMQP(s)
-			if err != nil {
-				fmt.Fprintln(os.Stderr, "ERROR:", err.Error())
-			}
-		}
-	}()
+	d := NewStreamDemux()
 
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
 	packets := packetSource.Packets()
@@ -101,11 +90,32 @@ func run(c *cli.Context) error {
 			if packet == nil {
 				return nil
 			}
-			s.Write(packet)
+			flow := GetPacketFlow(packet).String()
+			if flow == "" {
+				continue
+			}
+			i := d.Get(flow, func(s *stream) {
+				a := amqpDecoder{
+					filterExchange: c.String("exchange"),
+					filterMethod:   c.String("method"),
+				}
+				go func() {
+					for {
+						err := a.decodeAMQP(s)
+						if err == io.EOF {
+							return
+						}
+						if err != nil {
+							fmt.Fprintln(os.Stderr, "ERROR: decode:", err.Error())
+						}
+					}
+				}()
+
+			})
+			i.s.Write(packet)
 
 		case <-ticker:
-			// Every minute, flush connections that haven't seen activity in the past 2 minutes.
-			// assembler.FlushOlderThan(time.Now().Add(time.Minute * -2))
+			d.CloseInactive()
 		}
 	}
 

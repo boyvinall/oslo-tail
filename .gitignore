@@ -1,3 +1,4 @@
 oslo-tail
 *.code-workspace
 *.pcap*
+log*

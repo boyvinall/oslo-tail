@@ -4,10 +4,10 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
-	"os"
+
+	"github.com/pkg/errors"
 )
 
 type frameType uint8
@@ -54,21 +54,20 @@ type amqpDecoder struct {
 
 	display      bool
 	basicDeliver *msgBasicDeliver
+	info         packetInfo
 }
 
 func (a *amqpDecoder) decodeAMQP(s *stream) error {
 	r := io.Reader(s)
 	var scratch [7]byte
 
-	if _, err := io.ReadFull(r, scratch[:7]); err != nil {
-		return err
-	}
+	_, err := io.ReadFull(r, scratch[:7])
+	a.info = s.Info()
+	log := a.info.Log()
 
-	info := s.Info()
-	ip := info.ip
-	tcp := info.tcp
-	t := info.p.Metadata().Timestamp
-	fmt.Printf("%s %s:%d -> %s:%d seq %5d\n", t.Format("15:04:05.000"), ip.SrcIP, tcp.SrcPort, ip.DstIP, tcp.DstPort, tcp.Seq)
+	if err != nil {
+		return errors.Wrap(err, log)
+	}
 
 	typ := frameType(scratch[0])
 	channel := binary.BigEndian.Uint16(scratch[1:3])
@@ -76,11 +75,16 @@ func (a *amqpDecoder) decodeAMQP(s *stream) error {
 
 	if size > maxSize || !typ.IsValid() {
 		b := make([]byte, maxSize)
-		n, err := r.Read(b)
-		fmt.Fprintf(os.Stderr, "ERROR: typ=%s size=%d n=%d err=%v packets=%d\n", typ, size, n, err, s.Packets())
-		fmt.Fprintln(os.Stderr, hex.Dump(append(scratch[:], b[:n]...)))
-		return nil
+		n, _ := r.Read(b)
+		b = append(scratch[:], b[:n]...)
+		if len(b) > 256 {
+			b = b[:256]
+		}
+		err := errors.New(hex.Dump(b))
+		err = errors.Wrapf(err, "typ=%s size=%d n=%d packets=%d\n", typ, size, n, s.Packets())
+		return errors.Wrap(err, log)
 	}
+	// fmt.Printf(log)
 
 	b := make([]byte, size)
 	n, err := io.ReadFull(r, b)
@@ -88,20 +92,20 @@ func (a *amqpDecoder) decodeAMQP(s *stream) error {
 		return fmt.Errorf("read only %d bytes instead of expected %d", n, size)
 	}
 	if err != nil {
-		return err
+		return errors.Wrap(err, log)
 	}
 
 	switch typ {
 	case frameMethod:
 		err = a.decodeMethod(b)
 		if err != nil {
-			return err
+			return errors.Wrap(err, log)
 		}
 
 	case frameBody:
 		err = a.decodeBody(b)
 		if err != nil {
-			return err
+			return errors.Wrap(err, log)
 		}
 
 	case frameHeader:
@@ -113,11 +117,12 @@ func (a *amqpDecoder) decodeAMQP(s *stream) error {
 	}
 
 	if _, err := io.ReadFull(r, scratch[:1]); err != nil {
-		return err
+		return errors.Wrap(err, log)
 	}
 
 	if scratch[0] != frameEnd {
-		return errors.New("end byte invalid")
+		err := errors.New("end byte invalid")
+		return errors.Wrap(err, log)
 	}
 
 	return nil
@@ -155,6 +160,7 @@ func (m methodID) String() string {
 const (
 	classBasic classID = 60
 
+	methodPublic  methodID = 40
 	methodDeliver methodID = 60
 	methodAck     methodID = 80
 )
@@ -208,7 +214,7 @@ func (a *amqpDecoder) decodeBody(b []byte) error {
 	m := map[string]interface{}{}
 	err := json.Unmarshal(b, &m)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "unmarshal/1")
 	}
 	msg := m["oslo.message"]
 	if msg == "" {
@@ -216,9 +222,10 @@ func (a *amqpDecoder) decodeBody(b []byte) error {
 	}
 
 	payload := map[string]interface{}{}
-	err = json.Unmarshal([]byte(msg.(string)), &payload)
+	bb := []byte(msg.(string))
+	err = json.Unmarshal(bb, &payload)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "unmarshal/2")
 	}
 	_, methodOK := payload["method"]
 	_, resultOK := payload["result"]
@@ -226,13 +233,13 @@ func (a *amqpDecoder) decodeBody(b []byte) error {
 		if a.filterMethod == "" {
 			p, err := json.MarshalIndent(payload["args"], "  ", "  ")
 			if err != nil {
-				return err
+				return errors.Wrap(err, "marshal/1")
 			}
 			fmt.Println(" ", payload["method"].(string), string(p))
 		} else if a.filterMethod == payload["method"].(string) {
 			p, err := json.MarshalIndent(payload["args"], "", "  ")
 			if err != nil {
-				return err
+				return errors.Wrap(err, "marshal/2")
 			}
 			fmt.Printf("%s method=%s\n%s\n", a.basicDeliver.String(), payload["method"].(string), string(p))
 		}
