@@ -52,6 +52,7 @@ type amqpDecoder struct {
 	filterExchange string
 	filterMethod   string
 
+	flow         string
 	display      bool
 	basicDeliver *msgBasicDeliver
 	info         packetInfo
@@ -67,6 +68,11 @@ func (a *amqpDecoder) decodeAMQP(s *stream) error {
 
 	if err != nil {
 		return errors.Wrap(err, log)
+	}
+
+	flow := GetPacketFlow(a.info.p).String()
+	if flow != a.flow {
+		return errors.Errorf("mismatched flow %s != %s ??", flow, a.flow)
 	}
 
 	typ := frameType(scratch[0])
@@ -147,6 +153,7 @@ type methodID uint16
 var methodLookup = map[methodID]string{
 	methodDeliver: "deliver",
 	methodAck:     "ack",
+	methodPublish: "publish",
 }
 
 func (m methodID) String() string {
@@ -160,7 +167,7 @@ func (m methodID) String() string {
 const (
 	classBasic classID = 60
 
-	methodPublic  methodID = 40
+	methodPublish methodID = 40
 	methodDeliver methodID = 60
 	methodAck     methodID = 80
 )
@@ -192,6 +199,16 @@ func (a *amqpDecoder) decodeMethod(b []byte) error {
 			}
 
 			a.display = a.filterExchange == ""
+
+		case methodPublish:
+			msg = &msgBasicPublish{}
+			err := msg.decode(b[4:])
+			if err != nil {
+				return err
+			}
+
+			a.display = a.filterExchange == ""
+			// a.display = a.filterExchange == "" || a.filterExchange == a.basicDeliver.Exchange
 		}
 	}
 
@@ -201,6 +218,7 @@ func (a *amqpDecoder) decodeMethod(b []byte) error {
 	}
 
 	if a.display && a.filterMethod == "" {
+		fmt.Printf(a.info.Log())
 		fmt.Printf("%-30s%s\n", fmt.Sprintf("%s.%s", c, m), extra)
 	}
 	return nil

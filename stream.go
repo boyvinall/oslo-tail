@@ -133,7 +133,7 @@ func NewStreamDemux() streamDemux {
 func (d *streamDemux) Get(flow string, f func(s *stream)) streamInfo {
 	i, ok := d.streams[flow]
 	if !ok {
-		fmt.Println("New stream for", flow)
+		// fmt.Println("New stream for", flow)
 		s := NewStream()
 		i = streamInfo{
 			s: s,

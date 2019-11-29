@@ -70,3 +70,38 @@ func (m *msgBasicAck) decode(b []byte) error {
 func (m *msgBasicAck) String() string {
 	return fmt.Sprintf("deliveryTag=%v", m.DeliveryTag)
 }
+
+type msgBasicPublish struct {
+	Reserved1  uint16
+	Exchange   string
+	RoutingKey string
+	Mandatory  bool
+	Immediate  bool
+}
+
+func (m *msgBasicPublish) decode(b []byte) error {
+	buf := bytes.NewBuffer(b)
+
+	err := binary.Read(buf, binary.BigEndian, &m.Reserved1)
+	if err != nil {
+		return err
+	}
+
+	m.Exchange = shortstr(buf)
+	m.RoutingKey = shortstr(buf)
+
+	var bits byte
+	bits, err = buf.ReadByte()
+	if err != nil {
+		return err
+	}
+
+	m.Mandatory = (bits&(1<<0) > 0)
+	m.Immediate = (bits&(1<<1) > 0)
+
+	return nil
+}
+
+func (m *msgBasicPublish) String() string {
+	return fmt.Sprintf("x=%s rk=%s", m.Exchange, m.RoutingKey)
+}

@@ -98,6 +98,7 @@ func run(c *cli.Context) error {
 				a := amqpDecoder{
 					filterExchange: c.String("exchange"),
 					filterMethod:   c.String("method"),
+					flow:           flow,
 				}
 				go func() {
 					for {
